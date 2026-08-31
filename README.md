@@ -5,11 +5,13 @@ transport **contracts** data — transport contracts and master transport
 contracts across TBG, TAG, and NTS.
 
 Rebuilds itself daily from the public API and republishes to
-[poc2.gasbrazil.com](https://poc2.gasbrazil.com) via GitHub Actions + Pages.
-Same architecture as [poc-dashboard](https://github.com/caissonpoint/poc-dashboard)
-and [ons-dashboard](https://github.com/caissonpoint/ons-dashboard) (gzip+base64
-JSON payload inflated client-side into a single static HTML file — no server,
-no database).
+[poc2.gasbrazil.com](https://poc2.gasbrazil.com) via GitHub Actions + Pages,
+mirroring to [gasbrazil.github.io/contratos](https://gasbrazil.github.io/contratos)
+as part of the gasbrazil.com dashboard hub (same pattern as
+[poc-dashboard](https://github.com/caissonpoint/poc-dashboard) → `/poc` and
+[ons-dashboard](https://github.com/caissonpoint/ons-dashboard) → `/ons`).
+Same architecture as those two projects (gzip+base64 JSON payload inflated
+client-side into a single static HTML file — no server, no database).
 
 ## Source
 
@@ -33,10 +35,12 @@ no database).
   each of those two tabs on the live site (same method used for the original
   Contrato Master capture) and pass them along — see `data/api-research.md`
   equivalent in project memory for the full research trail.
-- TSO id mapping: `1 = TBG` is confirmed directly from the API. `2 = TAG` and
-  `3 = NTS` are assumed from the UI's checkbox order and are not yet
-  independently confirmed — worth a quick spot-check against the live site
-  before fully trusting those two labels.
+- TSO id mapping: `1 = TBG`, `2 = TAG`, `3 = NTS` — confirmed.
+- The dashboard excludes concluded ("Concluído") transport contracts by
+  default to keep the client-side payload smaller — `dashboard.py` filters
+  them out of the shipped `docs/index.html` (see `load_payload()`). The full
+  history, concluded contracts included, stays in `data/contratos.parquet`
+  (checked into git) for anyone who needs it.
 - The source API has no CORS headers reachable from this sandbox's network,
   so live fetching is expected to run from GitHub Actions (matching the
   precedent from ons-dashboard/poc-dashboard) rather than client-side or from
@@ -50,7 +54,9 @@ no database).
 - `make_mock.py` — synthetic raw data for local testing without hitting the
   live API.
 - `.github/workflows/refresh.yml` — daily cron (11:00 UTC) + push +
-  manual dispatch: fetch → build → commit → deploy to Pages.
+  manual dispatch: fetch → build → commit → deploy to Pages → mirror to
+  `gasbrazil/contratos` (skipped if the `GASBRAZIL_CONTRATOS_DEPLOY_KEY`
+  secret isn't set; never fails the job either way).
 
 ## Local dev
 

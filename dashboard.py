@@ -40,6 +40,17 @@ DATE_COLS = {"Start Date", "End Date"}
 
 def load_payload():
     df = pd.read_parquet(PARQUET_PATH)
+
+    # Concluded ("Concluído") transport contracts are expired/closed -- Eric asked
+    # to drop them from the shipped dashboard to keep the client-side payload
+    # smaller, since the full history (including concluded rows) stays available
+    # in the checked-in data/contratos.parquet for anyone who needs it. Matched
+    # case-insensitively since the API's own casing isn't something we control.
+    total_rows = len(df)
+    is_concluded = df["Status"].astype(str).str.casefold() == "concluído".casefold()
+    excluded_concluded = int(is_concluded.sum())
+    df = df[~is_concluded]
+
     df = df[COLUMNS].copy()
     for c in DATE_COLS:
         df[c] = df[c].dt.strftime("%Y-%m-%d").where(df[c].notna(), None)
@@ -50,11 +61,14 @@ def load_payload():
 
     generated = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
+    print(f"Excluded {excluded_concluded} concluded contract(s) of {total_rows} total; shipping {len(records)} rows.")
+
     return {
         "generated": generated,
         "columns": COLUMNS,
         "displayNames": DISPLAY_NAMES,
         "rows": records,
+        "excludedConcluded": excluded_concluded,
     }
 
 
@@ -219,6 +233,7 @@ footer a { color: var(--accent); }
 <footer>
   &copy; <span id="year"></span> GasBrazil.com &middot; Data: Portal de Oferta de Capacidade (public API) &middot; Contact: <a href="mailto:eb@gasbrazil.com">eb@gasbrazil.com</a>
   <br>Covers "Contrato de Transporte" and "Contrato Master" contract types. "Contrato de Transporte Legado" and "Conexão de Acesso" are not yet included (small, separately-sourced categories on the source site).
+  <br><span id="footer-note"></span>
 </footer>
 </div>
 <div class="tt" id="chart-tt"></div>
@@ -1145,6 +1160,10 @@ async function init() {
     if (savedPrefs.widths && typeof savedPrefs.widths === "object") columnWidths = Object.assign({}, DEFAULT_COL_WIDTH, savedPrefs.widths);
   }
   document.getElementById("subtitle").textContent = "Last refreshed " + DATA.generated;
+  if (DATA.excludedConcluded) {
+    document.getElementById("footer-note").textContent =
+      `Excludes ${DATA.excludedConcluded.toLocaleString("en-US")} concluded ("Concluído") contract(s) -- full history is retained in the repo's data store.`;
+  }
   populateSelect(document.getElementById("f-category"), DATA.rows.map(r => r["Contract Category"]));
   buildHeader();
   renderTsoRow();
