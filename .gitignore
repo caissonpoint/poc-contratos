@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.DS_Store
+run_refresh.local.bat
+data/raw_contratos.json
+gh_pat.local
