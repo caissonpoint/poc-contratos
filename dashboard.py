@@ -20,6 +20,7 @@ DEFAULT_OUT = HERE / "docs" / "index.html"
 # way, so every dashboard in the GasBrazil.com family renders with the real
 # typeface instead of silently falling back to the OS default.
 FONT_PATH = HERE / "fonts" / "Degular.ttf"
+FAVICON_PATH = HERE / "favicon.png"
 
 COLUMNS = [
     "Transporter (TSO)", "Contract Number", "Contract Category", "Status", "Shipper",
@@ -41,13 +42,13 @@ DATE_COLS = {"Start Date", "End Date"}
 def load_payload():
     df = pd.read_parquet(PARQUET_PATH)
 
-    # Concluded ("Concluído") transport contracts are expired/closed -- Eric asked
-    # to drop them from the shipped dashboard to keep the client-side payload
-    # smaller, since the full history (including concluded rows) stays available
-    # in the checked-in data/contratos.parquet for anyone who needs it. Matched
+    # Concluded transport contracts are expired/closed -- Eric asked to drop
+    # them from the shipped dashboard to keep the client-side payload smaller,
+    # since the full history (including concluded rows) stays available in the
+    # checked-in data/contratos.parquet for anyone who needs it. Matched
     # case-insensitively since the API's own casing isn't something we control.
     total_rows = len(df)
-    is_concluded = df["Status"].astype(str).str.casefold() == "concluído".casefold()
+    is_concluded = df["Status"].astype(str).str.casefold() == "concluded".casefold()
     excluded_concluded = int(is_concluded.sum())
     df = df[~is_concluded]
 
@@ -83,8 +84,8 @@ TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>POC Contratos Dashboard</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2303183D'/%3E%3Cpath d='M3 11.5 6 7l3 2.5L13 4' stroke='white' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<title>POC Contracts Dashboard</title>
+<link rel="icon" href="{{FAVICON_DATA_URI}}">
 <style>
 __FONT_FACE__
 :root {
@@ -191,7 +192,7 @@ footer a { color: var(--accent); }
 <div class="wrap">
 <header>
   <div>
-    <h1>POC Contratos Dashboard</h1>
+    <h1>POC Contracts Dashboard</h1>
     <div class="subtitle" id="subtitle">Last refreshed &mdash;</div>
   </div>
   <div class="header-right">
@@ -205,7 +206,7 @@ footer a { color: var(--accent); }
 </header>
 <div class="sources">
   <span class="sources-label">Data source</span>
-  <a class="pill" href="https://ofertadecapacidade.com.br/home/contratos" target="_blank" rel="noopener">Portal de Oferta de Capacidade &mdash; Contratos</a>
+  <a class="pill" href="https://ofertadecapacidade.com.br/home/contratos" target="_blank" rel="noopener">Portal de Oferta de Capacidade &mdash; Contracts</a>
 </div>
 <div class="tso-row" id="tso-row"></div>
 <div class="chart-card">
@@ -232,7 +233,7 @@ footer a { color: var(--accent); }
 </div>
 <footer>
   &copy; <span id="year"></span> GasBrazil.com &middot; Data: Portal de Oferta de Capacidade (public API) &middot; Contact: <a href="mailto:eb@gasbrazil.com">eb@gasbrazil.com</a>
-  <br>Covers "Contrato de Transporte" and "Contrato Master" contract types. "Contrato de Transporte Legado" and "Conexão de Acesso" are not yet included (small, separately-sourced categories on the source site).
+  <br>Covers "Transport Contract" and "Master Contract" contract types. "Legacy Transport Contract" and "Access Connection" are not yet included (small, separately-sourced categories on the source site).
   <br><span id="footer-note"></span>
 </footer>
 </div>
@@ -270,8 +271,8 @@ const DATE_FILTER_COLS = new Set(["Start Date", "End Date"]);
 // writes a {from, to} range ending today (same shape the date-range menu
 // uses). Clicking an already-active chip clears that column's filter.
 const QUICK_FILTERS = [
-  { key: "active", label: "Active", col: "Status", type: "set", values: ["Ativo", "Contrato Master Habilitado"] },
-  { key: "master", label: "Contrato Master", col: "Contract Category", type: "set", values: ["Contrato Master"] },
+  { key: "active", label: "Active", col: "Status", type: "set", values: ["Active", "Master Contract Enabled"] },
+  { key: "master", label: "Master Contract", col: "Contract Category", type: "set", values: ["Master Contract"] },
   { key: "last30", label: "Started Last 30 Days", col: "Start Date", type: "days", days: 30 },
   { key: "tso-TBG", label: "TBG", col: "Transporter (TSO)", type: "set", values: ["TBG"] },
   { key: "tso-TAG", label: "TAG", col: "Transporter (TSO)", type: "set", values: ["TAG"] },
@@ -283,8 +284,8 @@ const QUICK_FILTERS = [
    combination as a toggle chip below, each becomes its own colored line,
    plotting the capacity-weighted average Allocated Tariff (R$/MMBtu) against
    the contract Start Date. Master contracts carry no tariff/capacity of
-   their own, so in practice only "Contrato de Transporte" (and the rare
-   "...(Leilão)") categories produce a line -- picking a Master combo simply
+   their own, so in practice only "Transport Contract" (and the rare
+   "...(Auction)") categories produce a line -- picking a Master combo simply
    shows no points, same empty-state handling as any other combo with zero
    priced rows. The chart plots against the table's `filtered` rows, so the
    existing toolbar / quick-filter / column filters narrow the chart exactly
@@ -292,7 +293,7 @@ const QUICK_FILTERS = [
 ------------------------------------------------------------------------- */
 const CHART_PALETTE_LIGHT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
 const CHART_PALETTE_DARK = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"];
-const CATEGORY_ORDER = ["Contrato de Transporte", "Contrato de Transporte (Leilão)", "Contrato Master"];
+const CATEGORY_ORDER = ["Transport Contract", "Transport Contract (Auction)", "Master Contract"];
 const TSO_ORDER = ["TBG", "TAG", "NTS"];
 
 const comboKey = (tso, cat) => tso + "||" + cat;
@@ -579,8 +580,8 @@ function renderChart() {
 
 function initChartDefaults() {
   for (const group of availableCombos()) {
-    if (group.cats.includes("Contrato de Transporte")) {
-      const key = comboKey(group.tso, "Contrato de Transporte");
+    if (group.cats.includes("Transport Contract")) {
+      const key = comboKey(group.tso, "Transport Contract");
       chartPicked.add(key);
       chartClaimSlot(key);
     }
@@ -1017,7 +1018,7 @@ function mean(nums) {
 
 // Snapshot summary, not a rolling time window (contracts are a stock, not a
 // stream of trades) -- for each known TSO: how many contracts are currently
-// "active" (Status Ativo / Contrato Master Habilitado) and how much total
+// "active" (Status Active / Master Contract Enabled) and how much total
 // contracted capacity that represents (Master rows carry no capacity of
 // their own, so they add to the count but not the capacity total).
 function renderTsoRow() {
@@ -1025,7 +1026,7 @@ function renderTsoRow() {
     const ai = TSO_ORDER.indexOf(a), bi = TSO_ORDER.indexOf(b);
     return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi) || a.localeCompare(b);
   });
-  const ACTIVE_STATUSES = new Set(["Ativo", "Contrato Master Habilitado"]);
+  const ACTIVE_STATUSES = new Set(["Active", "Master Contract Enabled"]);
   const el = document.getElementById("tso-row");
   el.innerHTML = "";
   for (const tso of allTsos) {
@@ -1159,7 +1160,7 @@ function downloadCsv() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "poc_contratos.csv";
+  a.download = "poc_contracts.csv";
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -1207,7 +1208,7 @@ async function init() {
   document.getElementById("subtitle").textContent = "Last refreshed " + DATA.generated;
   if (DATA.excludedConcluded) {
     document.getElementById("footer-note").textContent =
-      `Excludes ${DATA.excludedConcluded.toLocaleString("en-US")} concluded ("Concluído") contract(s) -- full history is retained in the repo's data store.`;
+      `Excludes ${DATA.excludedConcluded.toLocaleString("en-US")} concluded contract(s) -- full history is retained in the repo's data store.`;
   }
   populateSelect(document.getElementById("f-category"), DATA.rows.map(r => r["Contract Category"]));
   buildHeader();
@@ -1264,7 +1265,20 @@ def write_dashboard(out_path=DEFAULT_OUT):
         # Repo checkout missing fonts/Degular.ttf -- degrade to the system
         # fallback stack rather than shipping a broken @font-face rule.
         font_face = ""
-    html = TEMPLATE.replace("__PAYLOAD__", b64).replace("__FONT_FACE__", font_face)
+    if FAVICON_PATH.exists():
+        favicon_b64 = base64.b64encode(FAVICON_PATH.read_bytes()).decode("ascii")
+        favicon_data_uri = "data:image/png;base64," + favicon_b64
+    else:
+        # Repo checkout missing favicon.png -- fall back to a plain gray
+        # square rather than a broken/missing icon link.
+        favicon_data_uri = (
+            "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
+            "viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' "
+            "fill='%2303183D'/%3E%3C/svg%3E"
+        )
+    html = (TEMPLATE.replace("__PAYLOAD__", b64)
+            .replace("__FONT_FACE__", font_face)
+            .replace("{{FAVICON_DATA_URI}}", favicon_data_uri))
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html, encoding="utf-8")

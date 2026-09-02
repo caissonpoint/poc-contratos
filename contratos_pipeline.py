@@ -85,10 +85,39 @@ BRANCHES = {
 
 TSO_NAMES = {"1": "TBG", "2": "TAG", "3": "NTS"}
 
+# Display values below are English translations of what the API returns --
+# CONTRACT_CATEGORY_MAP's *keys* (tipoContrato) and BRANCHES' values
+# (statusContrato) above are the API's own enum vocabulary and must stay
+# as-is; only the right-hand display strings are ours to translate.
 CONTRACT_CATEGORY_MAP = {
-    "PEDIDO": "Contrato de Transporte",
-    "PEDIDO_LEILAO": "Contrato de Transporte (Leilão)",
-    "CONTRATO MASTER DE TRANSPORTE": "Contrato Master",
+    "PEDIDO": "Transport Contract",
+    "PEDIDO_LEILAO": "Transport Contract (Auction)",
+    "CONTRATO MASTER DE TRANSPORTE": "Master Contract",
+}
+
+# statusContrato as returned in each row (not the query-filter enum above) is
+# a Portuguese human-readable label, not the plain ATIVO/CONCLUIDO/HABILITADO
+# code -- translate it too.
+STATUS_MAP = {
+    "Ativo": "Active",
+    "Concluído": "Concluded",
+    "Contrato Master Habilitado": "Master Contract Enabled",
+}
+
+PRODUCT_TYPE_MAP = {
+    "Diário": "Daily",
+    "Anual Extraordinário": "Extraordinary Annual",
+    "Flexível Anual": "Flexible Annual",
+    "Mensal": "Monthly",
+    "Oferta Anual": "Annual Offer",
+    "Trimestral": "Quarterly",
+    "Interruptível": "Interruptible",
+    "Longo Prazo": "Long Term",
+}
+
+QUALITY_MAP = {
+    "Livre": "Free",
+    "Restrita": "Restricted",
 }
 
 FLOW_MAP = {"Entrada": "Entry", "Saída": "Exit", "Saida": "Exit"}
@@ -185,10 +214,22 @@ def _to_str_or_none(v):
     return v
 
 
+def _translate_amendment(v):
+    """pedidoComAditivo is 'Contrato de Transporte' (i.e. it repeats the raw
+    category label) when a contract has no amendment, or 'Aditivo Nº <n>'
+    when it does -- translate both shapes to English."""
+    if v is None:
+        return v
+    if isinstance(v, str) and v.startswith("Aditivo Nº"):
+        return "Amendment No." + v[len("Aditivo Nº"):]
+    return CONTRACT_CATEGORY_MAP.get(v, v)
+
+
 def transform(raw_rows):
     """Port of the field mapping/cleanup the dashboard needs: TSO id -> name,
     tipoContrato -> a readable category, '-' placeholders -> None, dates
-    parsed, English column names for the dashboard's display layer."""
+    parsed, English column names AND English category/status/product-type/
+    quality display values for the dashboard's display layer."""
     if not raw_rows:
         return pd.DataFrame()
 
@@ -201,6 +242,10 @@ def transform(raw_rows):
     category = df["tipoContrato"].map(CONTRACT_CATEGORY_MAP)
     category = category.where(category.notna(), df["tipoContrato"])
 
+    status = df["statusContrato"].map(STATUS_MAP)
+    status = status.where(status.notna(), df["statusContrato"])
+
+    amendment = df["pedidoComAditivo"].map(_translate_amendment)
     is_amendment = df["pedidoComAditivo"].fillna("").str.startswith("Aditivo")
 
     start = pd.to_datetime(df["dataInicio"], errors="coerce")
@@ -211,6 +256,12 @@ def transform(raw_rows):
     for col in STRING_DASH_COLS:
         df[col] = df[col].map(_to_str_or_none)
 
+    product_type = df["tipoProduto"].map(PRODUCT_TYPE_MAP)
+    product_type = product_type.where(product_type.notna(), df["tipoProduto"])
+
+    quality = df["nomeQualidade"].map(QUALITY_MAP)
+    quality = quality.where(quality.notna(), df["nomeQualidade"])
+
     flow = df["fluxoPontoZona"].map(FLOW_MAP)
     flow = flow.where(flow.notna(), df["fluxoPontoZona"])
 
@@ -218,16 +269,16 @@ def transform(raw_rows):
         "Transporter (TSO)": transporter,
         "Contract Number": df["numeroPedido"],
         "Contract Category": category,
-        "Amendment": df["pedidoComAditivo"],
+        "Amendment": amendment,
         "Is Amendment": is_amendment,
         "Shipper": df["nomeCarregador"],
         "Start Date": start,
         "End Date": end,
-        "Product Type": df["tipoProduto"],
+        "Product Type": product_type,
         "Point/Zone": df["nomePontoZona"],
         "Flow": flow,
-        "Status": df["statusContrato"],
-        "Quality": df["nomeQualidade"],
+        "Status": status,
+        "Quality": quality,
         "Contracted Capacity (000 m3/d)": df["nrCapacidade"],
         "Allocated Tariff (R$/MMBtu)": df["vlTarifaAlocada"],
         "Tariff Multiplier": df["vlMultiplicador"],
@@ -261,7 +312,7 @@ def cmd_build(args):
         problems.append("Start Date entirely null")
     else:
         categories = set(df["Contract Category"].unique())
-        expected = {"Contrato de Transporte", "Contrato Master"}
+        expected = {"Transport Contract", "Master Contract"}
         if not expected <= categories:
             problems.append(f"expected categories missing: {sorted(expected - categories)}, got: {sorted(categories)}")
     if problems:
