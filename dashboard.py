@@ -136,6 +136,11 @@ h1 { font-size: 25px; margin: 0; letter-spacing: -.01em; }
 .drill-card table { border-collapse: collapse; width: 100%; font-size: 12.5px; white-space: nowrap; }
 .drill-card th, .drill-card td { padding: 5px 10px; border-bottom: 1px solid var(--border); text-align: left; }
 .drill-card th { color: var(--muted2); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; cursor: default; position: static; }
+.drill-card thead tr:first-child th { border-bottom: none; padding-bottom: 0; }
+.drill-card th.grp { text-align: center; color: var(--text); letter-spacing: .04em; }
+.drill-card th.grp.on { color: var(--accent); }
+.drill-card .sep { border-left: 1px solid var(--border); }
+.drill-card td.zero { color: var(--muted); }
 .drill-card td.num, .drill-card th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .drill-card tbody tr { cursor: pointer; }
 .drill-card tbody tr:hover { background: var(--accent-soft); }
@@ -183,7 +188,7 @@ footer a { color: var(--accent); }
 .filter-menu label.fm-date { display: block; font-size: 11px; color: var(--muted); margin: 6px 0 3px; }
 .filter-menu input[type="date"] { width: 100%; }
 .filter-menu input[type="text"].fm-search { width: 100%; box-sizing: border-box; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 12px; margin-bottom: 6px; }
-.chart-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+.chart-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin: 18px 0 14px; }
 .panel-title { font-size: 13px; font-weight: 600; margin: 0 0 2px; }
 .panel-note { font-size: 11.5px; color: var(--muted); margin: 0 0 12px; }
 .chart-picker { display: flex; flex-wrap: wrap; gap: 14px 18px; margin-bottom: 12px; }
@@ -226,13 +231,7 @@ footer a { color: var(--accent); }
   <a class="pill" href="https://ofertadecapacidade.com.br/home/contratos" target="_blank" rel="noopener">Portal de Oferta de Capacidade &mdash; Contracts</a>
 </div>
 <div class="tso-row" id="tso-row"></div>
-<div class="drill-card" id="drill-card" hidden></div>
-<div class="chart-card">
-  <p class="panel-title">Allocated Tariff Trend</p>
-  <p class="panel-note">Pick pipeline / contract-category combinations below &mdash; capacity-weighted average allocated tariff (R$/MMBtu) by contract start date. Reflects the filters above.</p>
-  <div class="chart-picker" id="chart-picker"></div>
-  <div id="chart-host"></div>
-</div>
+<div class="drill-card" id="drill-card"></div>
 <div class="quick-filters" id="quick-filters"></div>
 <div class="toolbar">
   <select id="f-category"><option value="">All contract categories</option></select>
@@ -248,6 +247,12 @@ footer a { color: var(--accent); }
     <thead><tr id="thead-row"></tr></thead>
     <tbody id="tbody"></tbody>
   </table>
+</div>
+<div class="chart-card">
+  <p class="panel-title">Allocated Tariff Trend</p>
+  <p class="panel-note">Pick pipeline / contract-category combinations below &mdash; capacity-weighted average allocated tariff (R$/MMBtu) by contract start date. Reflects the filters above.</p>
+  <div class="chart-picker" id="chart-picker"></div>
+  <div id="chart-host"></div>
 </div>
 <footer>
   &copy; <span id="year"></span> GasBrazil.com &middot; Data: Portal de Oferta de Capacidade (public API) &middot; Contact: <a href="mailto:eb@gasbrazil.com">eb@gasbrazil.com</a>
@@ -1111,7 +1116,7 @@ function mean(nums) {
 }
 
 // Rows that count toward a pipeline's headline position and toward the
-// drill-down: status Active / Master Contract Enabled AND currently inside
+// top-shippers panel: status Active / Master Contract Enabled AND currently inside
 // their own contract term. Status alone overstates it -- the feed leaves
 // plenty of "Active" rows sitting past their end date.
 const isActiveRow = r => ACTIVE_STATUSES.has(r["Status"]) && isCurrentlyValid(r);
@@ -1140,7 +1145,7 @@ function renderTsoRow() {
     chip.dataset.tso = tso;
     if (rows.length) {
       chip.className = "tso-chip";
-      chip.title = "Show " + tso + " only, with its top shippers";
+      chip.title = "Isolate " + tso + " in the top-shippers table and the contract table";
       chip.innerHTML = `<b>${escapeHtml(tso)}</b> &middot; ${rows.length.toLocaleString("en-US")} active contract${rows.length === 1 ? "" : "s"} &middot; ${fmtNum(capacity, 0)} 000 m&sup3;/d contracted`;
       chip.addEventListener("click", () => toggleDrillTso(tso));
     } else {
@@ -1157,102 +1162,6 @@ function updateTsoChips() {
   document.querySelectorAll("#tso-row .tso-chip").forEach(c => {
     c.classList.toggle("selected", c.dataset.tso === drillTso);
   });
-}
-
-/* ---------- pipeline drill-down --------------------------------------------
-   Clicking a pipeline chip pins that pipeline (writing the same
-   columnFilters["Transporter (TSO)"] Set the header menu and quick filters
-   use, so the table, chart and CSV export all narrow with it) and opens a
-   ranked view of who actually holds capacity there right now. Entry and exit
-   are kept as separate columns rather than summed into one number: the same
-   shipper commonly holds both sides on a pipeline and the two are not
-   interchangeable. A shipper row is itself a filter -- clicking one drills
-   the table to that shipper, clicking it again releases it.
-------------------------------------------------------------------------- */
-let drillTso = null;
-let drillShowAll = false;
-const DRILL_TOP_N = 10;
-
-function toggleDrillTso(tso) {
-  if (drillTso === tso) {
-    drillTso = null;
-    delete columnFilters["Transporter (TSO)"];
-    delete columnFilters["Shipper"];
-  } else {
-    drillTso = tso;
-    drillShowAll = false;
-    columnFilters["Transporter (TSO)"] = new Set([tso]);
-    delete columnFilters["Shipper"];
-  }
-  updateFilterIcons();
-  render();
-}
-
-function drillShipperRows() {
-  const by = new Map();
-  for (const r of filteredForDrill) {
-    if (r["Transporter (TSO)"] !== drillTso || !isActiveRow(r)) continue;
-    const name = r["Shipper"] || "(unnamed)";
-    if (!by.has(name)) by.set(name, { name, entry: 0, exit: 0, contracts: new Set() });
-    const e = by.get(name);
-    const cap = Number(r["Contracted Capacity (000 m3/d)"]) || 0;
-    if (r["Flow"] === "Entry") e.entry += cap;
-    else if (r["Flow"] === "Exit") e.exit += cap;
-    if (r["Contract Number"]) e.contracts.add(r["Contract Number"]);
-  }
-  const out = [...by.values()].map(e => ({ ...e, total: e.entry + e.exit, nContracts: e.contracts.size }));
-  out.sort((a, b) => b.total - a.total || b.nContracts - a.nContracts || a.name.localeCompare(b.name));
-  return out;
-}
-
-function renderDrill() {
-  const card = document.getElementById("drill-card");
-  if (!drillTso) { card.hidden = true; card.innerHTML = ""; return; }
-  card.hidden = false;
-  const all = drillShipperRows();
-  const pickedShipper = columnFilters["Shipper"] && columnFilters["Shipper"].size === 1
-    ? [...columnFilters["Shipper"]][0] : null;
-
-  if (!all.length) {
-    card.innerHTML = `<p class="panel-title">${escapeHtml(drillTso)} &mdash; Top Shippers</p>
-      <p class="panel-note">No active, currently-valid contracts on ${escapeHtml(drillTso)} match the filters in effect.</p>`;
-    return;
-  }
-  const shown = drillShowAll ? all : all.slice(0, DRILL_TOP_N);
-  const totEntry = all.reduce((a, e) => a + e.entry, 0);
-  const totExit = all.reduce((a, e) => a + e.exit, 0);
-  const body = shown.map((e, i) => `
-    <tr data-shipper="${escapeHtml(e.name)}" class="${pickedShipper === e.name ? "picked" : ""}">
-      <td class="rank">${i + 1}</td>
-      <td>${escapeHtml(e.name)}</td>
-      <td class="num">${e.nContracts.toLocaleString("en-US")}</td>
-      <td class="num">${e.entry ? fmtNum(e.entry, 0) : "&ndash;"}</td>
-      <td class="num">${e.exit ? fmtNum(e.exit, 0) : "&ndash;"}</td>
-      <td class="num">${fmtNum(e.total, 0)}</td>
-      <td class="num">${totEntry + totExit > 0 ? fmtNum(100 * e.total / (totEntry + totExit), 1) + "%" : "&ndash;"}</td>
-    </tr>`).join("");
-  card.innerHTML = `
-    <p class="panel-title">${escapeHtml(drillTso)} &mdash; Top Shippers by Held Capacity</p>
-    <p class="panel-note">Active contracts currently within their term, ${all.length.toLocaleString("en-US")} shipper${all.length === 1 ? "" : "s"} &middot;
-      ${fmtNum(totEntry, 0)} entry + ${fmtNum(totExit, 0)} exit = ${fmtNum(totEntry + totExit, 0)} 000 m&sup3;/d.
-      Reflects every filter in effect. Click a shipper to drill the table to it; click the ${escapeHtml(drillTso)} chip again to clear.</p>
-    <table>
-      <thead><tr><th></th><th>Shipper</th><th class="num">Contracts</th><th class="num">Entry (000 m&sup3;/d)</th><th class="num">Exit (000 m&sup3;/d)</th><th class="num">Total</th><th class="num">Share</th></tr></thead>
-      <tbody>${body}</tbody>
-    </table>
-    ${all.length > DRILL_TOP_N ? `<button class="drill-more">${drillShowAll ? "Show top " + DRILL_TOP_N + " only" : "Show all " + all.length.toLocaleString("en-US") + " shippers"}</button>` : ""}`;
-
-  card.querySelectorAll("tbody tr").forEach(tr => {
-    tr.addEventListener("click", () => {
-      const name = tr.dataset.shipper;
-      if (pickedShipper === name) delete columnFilters["Shipper"];
-      else columnFilters["Shipper"] = new Set([name]);
-      updateFilterIcons();
-      render();
-    });
-  });
-  const more = card.querySelector(".drill-more");
-  if (more) more.addEventListener("click", () => { drillShowAll = !drillShowAll; renderDrill(); });
 }
 
 function isoDate(d) { return d.toISOString().slice(0, 10); }
@@ -1287,6 +1196,130 @@ function toggleQuickFilter(qf) {
   }
   updateFilterIcons();
   render();
+}
+
+/* ---------- top shippers panel ---------------------------------------------
+   The headline panel: who actually holds capacity right now, ranked. It
+   defaults to all pipelines with one Entry/Exit column pair per pipeline --
+   the same shipper commonly holds both sides, and holdings on TBG vs NTS are
+   not interchangeable, so neither dimension is summed away. Clicking a
+   pipeline chip narrows it to that pipeline (writing the same
+   columnFilters["Transporter (TSO)"] Set the header menu and quick filters
+   use, so the table, chart and CSV export narrow with it). A shipper row is
+   itself a filter -- clicking one drills the table to that shipper, clicking
+   it again releases it.
+------------------------------------------------------------------------- */
+let drillTso = null;
+let drillShowAll = false;
+const DRILL_TOP_N = 10;
+
+function toggleDrillTso(tso) {
+  if (drillTso === tso) {
+    drillTso = null;
+    delete columnFilters["Transporter (TSO)"];
+  } else {
+    drillTso = tso;
+    columnFilters["Transporter (TSO)"] = new Set([tso]);
+  }
+  drillShowAll = false;
+  delete columnFilters["Shipper"];
+  updateFilterIcons();
+  render();
+}
+
+// One entry per shipper, carrying entry/exit capacity per pipeline. Built from
+// filteredForDrill (every filter in effect except Shipper), restricted to
+// contracts that are active AND currently within their own term.
+function drillShipperRows(tsos) {
+  const by = new Map();
+  for (const r of filteredForDrill) {
+    const tso = r["Transporter (TSO)"];
+    if (!tsos.includes(tso) || !isActiveRow(r)) continue;
+    const name = r["Shipper"] || "(unnamed)";
+    if (!by.has(name)) by.set(name, { name, cap: {}, contracts: new Set() });
+    const e = by.get(name);
+    if (!e.cap[tso]) e.cap[tso] = { entry: 0, exit: 0 };
+    const c = Number(r["Contracted Capacity (000 m3/d)"]) || 0;
+    if (r["Flow"] === "Entry") e.cap[tso].entry += c;
+    else if (r["Flow"] === "Exit") e.cap[tso].exit += c;
+    if (r["Contract Number"]) e.contracts.add(r["Contract Number"]);
+  }
+  const out = [...by.values()].map(e => {
+    let total = 0;
+    for (const t of tsos) total += (e.cap[t] ? e.cap[t].entry + e.cap[t].exit : 0);
+    return { ...e, total, nContracts: e.contracts.size };
+  });
+  out.sort((a, b) => b.total - a.total || b.nContracts - a.nContracts || a.name.localeCompare(b.name));
+  return out;
+}
+
+function renderDrill() {
+  const card = document.getElementById("drill-card");
+  // Which pipelines get a column pair: the selected one, or every pipeline
+  // that still carries capacity under the filters in effect.
+  const candidates = drillTso ? [drillTso] : orderedTsos();
+  const all = drillShipperRows(candidates);
+  const tsos = candidates.filter(t => all.some(e => e.cap[t] && (e.cap[t].entry || e.cap[t].exit)));
+  const cols = tsos.length ? tsos : candidates;
+
+  const scope = drillTso ? escapeHtml(drillTso) : "All Pipelines";
+  if (!all.length) {
+    card.innerHTML = `<p class="panel-title">Top Shippers by Held Capacity &mdash; ${scope}</p>
+      <p class="panel-note">No active, currently-valid contracts match the filters in effect.</p>`;
+    return;
+  }
+
+  const pickedShipper = columnFilters["Shipper"] && columnFilters["Shipper"].size === 1
+    ? [...columnFilters["Shipper"]][0] : null;
+  const shown = drillShowAll ? all : all.slice(0, DRILL_TOP_N);
+  const grand = all.reduce((a, e) => a + e.total, 0);
+  const totalsByTso = {};
+  for (const t of cols) totalsByTso[t] = all.reduce((a, e) => a + (e.cap[t] ? e.cap[t].entry + e.cap[t].exit : 0), 0);
+
+  const cell = v => v ? fmtNum(v, 0) : '<span class="zero">&ndash;</span>';
+  const head1 = cols.map(t => `<th class="grp sep ${t === drillTso ? "on" : ""}" colspan="2">${escapeHtml(t)}</th>`).join("");
+  const head2 = cols.map(() => '<th class="num sep">Entry</th><th class="num">Exit</th>').join("");
+  const body = shown.map((e, i) => {
+    const cells = cols.map(t => {
+      const c = e.cap[t] || { entry: 0, exit: 0 };
+      return `<td class="num sep">${cell(c.entry)}</td><td class="num">${cell(c.exit)}</td>`;
+    }).join("");
+    return `<tr data-shipper="${escapeHtml(e.name)}" class="${pickedShipper === e.name ? "picked" : ""}">
+      <td class="rank">${i + 1}</td>
+      <td>${escapeHtml(e.name)}</td>
+      <td class="num">${e.nContracts.toLocaleString("en-US")}</td>
+      ${cells}
+      <td class="num sep">${fmtNum(e.total, 0)}</td>
+      <td class="num">${grand > 0 ? fmtNum(100 * e.total / grand, 1) + "%" : "&ndash;"}</td>
+    </tr>`;
+  }).join("");
+
+  const mix = cols.map(t => `${escapeHtml(t)} ${fmtNum(totalsByTso[t], 0)}`).join(" &middot; ");
+  card.innerHTML = `
+    <p class="panel-title">Top Shippers by Held Capacity &mdash; ${scope}</p>
+    <p class="panel-note">Capacity in 000 m&sup3;/d on active contracts currently within their term &middot;
+      ${all.length.toLocaleString("en-US")} shipper${all.length === 1 ? "" : "s"} &middot; ${mix} &middot; total ${fmtNum(grand, 0)}.
+      Reflects every filter in effect. Click a pipeline chip above to isolate it${drillTso ? " (click " + scope + " again to clear)" : ""}; click a shipper to drill the table to it.</p>
+    <table>
+      <thead>
+        <tr><th></th><th></th><th></th>${head1}<th class="sep"></th><th></th></tr>
+        <tr><th></th><th>Shipper</th><th class="num">Contracts</th>${head2}<th class="num sep">Total</th><th class="num">Share</th></tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>
+    ${all.length > DRILL_TOP_N ? `<button class="drill-more">${drillShowAll ? "Show top " + DRILL_TOP_N + " only" : "Show all " + all.length.toLocaleString("en-US") + " shippers"}</button>` : ""}`;
+
+  card.querySelectorAll("tbody tr").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const name = tr.dataset.shipper;
+      if (pickedShipper === name) delete columnFilters["Shipper"];
+      else columnFilters["Shipper"] = new Set([name]);
+      updateFilterIcons();
+      render();
+    });
+  });
+  const more = card.querySelector(".drill-more");
+  if (more) more.addEventListener("click", () => { drillShowAll = !drillShowAll; renderDrill(); });
 }
 
 function buildQuickFilters() {
