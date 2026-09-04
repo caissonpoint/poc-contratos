@@ -120,11 +120,28 @@ h1 { font-size: 25px; margin: 0; letter-spacing: -.01em; }
 #theme-toggle:hover { background: var(--accent-soft); }
 #theme-toggle svg { width: 16px; height: 16px; display: block; }
 .tso-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
-.tso-chip { background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; font-size: 12px; box-shadow: var(--shadow); white-space: nowrap; }
+.tso-chip { background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; font-size: 12px; box-shadow: var(--shadow); white-space: nowrap; cursor: pointer; color: var(--text); font-family: var(--font); }
+.tso-chip:hover { background: var(--accent-soft); }
+.tso-chip.selected { background: var(--accent); color: #fff; border-color: var(--accent); }
+.tso-chip.selected .muted { color: rgba(255,255,255,.72); }
+.tso-chip.empty { cursor: default; }
+.tso-chip.empty:hover { background: var(--panel); }
 .tso-chip.empty { color: var(--muted); }
 .tso-chip b { font-weight: 700; }
 .tso-chip .muted { color: var(--muted); }
-.quick-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.quick-filters { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.qf-sep { width: 1px; align-self: stretch; background: var(--border-strong); margin: 0 4px; }
+.qf-btn.qf-validity { border-style: dashed; }
+.drill-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+.drill-card table { border-collapse: collapse; width: 100%; font-size: 12.5px; white-space: nowrap; }
+.drill-card th, .drill-card td { padding: 5px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+.drill-card th { color: var(--muted2); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; cursor: default; position: static; }
+.drill-card td.num, .drill-card th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.drill-card tbody tr { cursor: pointer; }
+.drill-card tbody tr:hover { background: var(--accent-soft); }
+.drill-card tbody tr.picked { background: var(--accent-soft); font-weight: 600; }
+.drill-card .rank { color: var(--muted); width: 22px; }
+.drill-more { background: none; border: none; color: var(--accent); font-size: 12px; cursor: pointer; padding: 8px 0 0; font-family: var(--font); }
 .qf-btn { background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; font-size: 12px; cursor: pointer; color: var(--text); font-family: var(--font); }
 .qf-btn:hover { background: var(--accent-soft); }
 .qf-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -209,6 +226,7 @@ footer a { color: var(--accent); }
   <a class="pill" href="https://ofertadecapacidade.com.br/home/contratos" target="_blank" rel="noopener">Portal de Oferta de Capacidade &mdash; Contracts</a>
 </div>
 <div class="tso-row" id="tso-row"></div>
+<div class="drill-card" id="drill-card" hidden></div>
 <div class="chart-card">
   <p class="panel-title">Allocated Tariff Trend</p>
   <p class="panel-note">Pick pipeline / contract-category combinations below &mdash; capacity-weighted average allocated tariff (R$/MMBtu) by contract start date. Reflects the filters above.</p>
@@ -274,10 +292,30 @@ const QUICK_FILTERS = [
   { key: "active", label: "Active", col: "Status", type: "set", values: ["Active", "Master Contract Enabled"] },
   { key: "master", label: "Master Contract", col: "Contract Category", type: "set", values: ["Master Contract"] },
   { key: "last30", label: "Started Last 30 Days", col: "Start Date", type: "days", days: 30 },
-  { key: "tso-TBG", label: "TBG", col: "Transporter (TSO)", type: "set", values: ["TBG"] },
-  { key: "tso-TAG", label: "TAG", col: "Transporter (TSO)", type: "set", values: ["TAG"] },
-  { key: "tso-NTS", label: "NTS", col: "Transporter (TSO)", type: "set", values: ["NTS"] },
 ];
+// Pipeline selection lives on the clickable summary chips above (which also
+// open the top-shippers drill-down), so it is deliberately not duplicated as a
+// quick-filter chip here.
+
+// A contract row is only shown by default when today falls inside its
+// [Start Date, End Date] window. The source feed keeps rows at status
+// "Active" / "Master Contract Enabled" well past their own end date, so
+// status alone is not a reliable currency test. Both exclusions are
+// reversible from their own chips rather than silently dropped at build time,
+// and "today" is evaluated in the browser so the published file stays correct
+// as it ages between rebuilds.
+const ACTIVE_STATUSES = new Set(["Active", "Master Contract Enabled"]);
+let showExpired = false;
+let showFuture = false;
+function todayIso() {
+  const n = new Date();
+  const p = v => String(v).padStart(2, "0");
+  return n.getFullYear() + "-" + p(n.getMonth() + 1) + "-" + p(n.getDate());
+}
+const TODAY_ISO = todayIso();
+const isExpired = r => !!r["End Date"] && r["End Date"] < TODAY_ISO;
+const isNotYetStarted = r => !!r["Start Date"] && r["Start Date"] > TODAY_ISO;
+const isCurrentlyValid = r => !isExpired(r) && !isNotYetStarted(r);
 
 /* ---------- tariff chart -----------------------------------------------------
    A single combined SVG line chart: pick any Pipeline + Contract Category
@@ -410,9 +448,42 @@ function chartNiceTicks(lo, hi, n) {
   return out;
 }
 const CHART_MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-function chartAxisLabel(iso, spanDays) {
-  const p = iso.split("-");
-  return spanDays > 200 ? CHART_MON[+p[1] - 1] + " '" + p[0].slice(2) : p[2] + " " + CHART_MON[+p[1] - 1];
+const CHART_DAY_MS = 86400000;
+// Date-axis ticks are placed on calendar boundaries across the plotted time
+// range, NOT at evenly spaced positions in the list of dates that happen to
+// carry a point. Sampling the date list by index is what produced the
+// overlapping "Aug '26 / Sep '26" collisions: a cluster of start dates a few
+// days apart yielded two ticks that rounded to the same month label and to
+// nearly the same pixel, and the final tick was force-anchored "end" on top of
+// its neighbour. Month-start (or day-step) ticks plus the minimum-gap check in
+// renderChart make the spacing a function of elapsed time instead.
+function chartAxisTicks(minD, maxD, spanDays) {
+  if (maxD <= minD) return [minD];
+  const out = [];
+  if (spanDays > 200) {
+    const months = Math.max(1, Math.round(spanDays / 30.44));
+    const step = Math.max(1, Math.ceil(months / 8));
+    const d0 = new Date(minD);
+    let cur = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), 1);
+    while (cur < minD) { const c = new Date(cur); cur = Date.UTC(c.getUTCFullYear(), c.getUTCMonth() + 1, 1); }
+    while (cur <= maxD) {
+      out.push(cur);
+      const c = new Date(cur);
+      cur = Date.UTC(c.getUTCFullYear(), c.getUTCMonth() + step, 1);
+    }
+  } else {
+    const step = Math.max(1, Math.ceil(spanDays / 8));
+    for (let t = minD; t <= maxD; t += step * CHART_DAY_MS) out.push(t);
+  }
+  // A range shorter than one step (or one month) can leave nothing to label.
+  if (!out.length) out.push(minD, maxD);
+  return out;
+}
+function chartAxisLabelMs(ms, spanDays) {
+  const d = new Date(ms);
+  return spanDays > 200
+    ? CHART_MON[d.getUTCMonth()] + " '" + String(d.getUTCFullYear()).slice(2)
+    : d.getUTCDate() + " " + CHART_MON[d.getUTCMonth()];
 }
 function fmtAxisNum(v, d) {
   if (v === null || v === undefined || !isFinite(v)) return "–";
@@ -452,7 +523,8 @@ function renderChart() {
   const pad = (hi - lo) * 0.08 || 1; hi += pad; if (lo < 0) lo -= pad;
 
   const W = Math.max(680, host.clientWidth || 680), H = 360, ML = 66, MR = 24, MT = 26, MB = 32;
-  const x = iso => ML + (W - ML - MR) * (maxD === minD ? 0.5 : (dNum(iso) - minD) / (maxD - minD));
+  const xMs = ms => ML + (W - ML - MR) * (maxD === minD ? 0.5 : (ms - minD) / (maxD - minD));
+  const x = iso => xMs(dNum(iso));
   const y = v => MT + (H - MT - MB) * (1 - (v - lo) / (hi - lo));
 
   const svg = chartSvgEl("svg", { viewBox: "0 0 " + W + " " + H, width: W, height: H, role: "img", "aria-label": "Allocated tariff trend by pipeline and contract category" });
@@ -468,11 +540,19 @@ function renderChart() {
   const lTitle = chartSvgEl("text", { x: ML, y: 14, fill: "var(--muted2)", "font-size": 11, "font-weight": 600 });
   lTitle.textContent = "R$/MMBtu"; svg.appendChild(lTitle);
 
-  const nT = Math.min(8, allDates.length);
-  for (let i = 0; i < nT; i++) {
-    const di = allDates[Math.round(i * (allDates.length - 1) / Math.max(1, nT - 1))];
-    const t = chartSvgEl("text", { x: x(di), y: H - 9, fill: "var(--muted)", "font-size": 11.5, "text-anchor": i === 0 ? "start" : (i === nT - 1 ? "end" : "middle") });
-    t.textContent = chartAxisLabel(di, spanDays); svg.appendChild(t);
+  // Draw ticks left to right, skipping any that would sit within MIN_TICK_GAP
+  // pixels of the previous label. Labels near either edge switch anchor so a
+  // long label can never be clipped by, or bleed past, the plot area.
+  const MIN_TICK_GAP = 62;
+  let lastTickX = -Infinity;
+  for (const ms of chartAxisTicks(minD, maxD, spanDays)) {
+    const px = xMs(ms);
+    if (px < ML - 1 || px > W - MR + 1) continue;
+    if (px - lastTickX < MIN_TICK_GAP) continue;
+    lastTickX = px;
+    const anchor = px < ML + 18 ? "start" : (px > W - MR - 18 ? "end" : "middle");
+    const t = chartSvgEl("text", { x: px, y: H - 9, fill: "var(--muted)", "font-size": 11.5, "text-anchor": anchor });
+    t.textContent = chartAxisLabelMs(ms, spanDays); svg.appendChild(t);
   }
 
   seriesList.forEach(s => {
@@ -664,6 +744,8 @@ let DATA = null;
 let sortCol = "Start Date";
 let sortDir = -1; // 1 = ascending, -1 = descending, 0 = unsorted (third click on a header)
 let filtered = [];
+// Same row set as `filtered` but with any Shipper filter left off -- see rowPasses().
+let filteredForDrill = [];
 let columnWidths = Object.assign({}, DEFAULT_COL_WIDTH);
 let columnOrder = [];
 let hiddenCols = new Set(DEFAULT_HIDDEN_COLS);
@@ -974,27 +1056,39 @@ function buildHeader() {
   updateArrows();
 }
 
+// `skipCol` lets a caller evaluate every filter EXCEPT one column's. The
+// drill-down uses it to ignore the Shipper filter, so clicking a shipper in
+// the ranking narrows the table without collapsing the ranking that produced
+// the click to a single row.
+function rowPasses(r, category, search, skipCol) {
+  if (!showExpired && isExpired(r)) return false;
+  if (!showFuture && isNotYetStarted(r)) return false;
+  if (category && r["Contract Category"] !== category) return false;
+  for (const col of DATA.columns) {
+    if (col === skipCol) continue;
+    const active = columnFilters[col];
+    if (!active) continue;
+    if (DATE_FILTER_COLS.has(col)) {
+      if (active.from && (!r[col] || r[col] < active.from)) return false;
+      if (active.to && (!r[col] || r[col] > active.to)) return false;
+    } else if (!active.has(String(r[col]))) {
+      return false;
+    }
+  }
+  if (search) {
+    const hay = ((r["Contract Number"] || "") + " " + (r["Shipper"] || "") + " " + (r["Point/Zone"] || "")).toLowerCase();
+    if (!hay.includes(search)) return false;
+  }
+  return true;
+}
+
 function applyFilters() {
   const category = document.getElementById("f-category").value;
   const search = document.getElementById("f-search").value.trim().toLowerCase();
-  filtered = DATA.rows.filter(r => {
-    if (category && r["Contract Category"] !== category) return false;
-    for (const col of DATA.columns) {
-      const active = columnFilters[col];
-      if (!active) continue;
-      if (DATE_FILTER_COLS.has(col)) {
-        if (active.from && (!r[col] || r[col] < active.from)) return false;
-        if (active.to && (!r[col] || r[col] > active.to)) return false;
-      } else if (!active.has(String(r[col]))) {
-        return false;
-      }
-    }
-    if (search) {
-      const hay = ((r["Contract Number"] || "") + " " + (r["Shipper"] || "") + " " + (r["Point/Zone"] || "")).toLowerCase();
-      if (!hay.includes(search)) return false;
-    }
-    return true;
-  });
+  filtered = DATA.rows.filter(r => rowPasses(r, category, search, null));
+  filteredForDrill = columnFilters["Shipper"]
+    ? DATA.rows.filter(r => rowPasses(r, category, search, "Shipper"))
+    : filtered;
 }
 
 function sortRows() {
@@ -1016,32 +1110,149 @@ function mean(nums) {
   return valid.reduce((a, b) => a + b, 0) / valid.length;
 }
 
-// Snapshot summary, not a rolling time window (contracts are a stock, not a
-// stream of trades) -- for each known TSO: how many contracts are currently
-// "active" (Status Active / Master Contract Enabled) and how much total
-// contracted capacity that represents (Master rows carry no capacity of
-// their own, so they add to the count but not the capacity total).
-function renderTsoRow() {
-  const allTsos = [...new Set(DATA.rows.map(r => r["Transporter (TSO)"]).filter(Boolean))].sort((a, b) => {
+// Rows that count toward a pipeline's headline position and toward the
+// drill-down: status Active / Master Contract Enabled AND currently inside
+// their own contract term. Status alone overstates it -- the feed leaves
+// plenty of "Active" rows sitting past their end date.
+const isActiveRow = r => ACTIVE_STATUSES.has(r["Status"]) && isCurrentlyValid(r);
+
+function orderedTsos() {
+  return [...new Set(DATA.rows.map(r => r["Transporter (TSO)"]).filter(Boolean))].sort((a, b) => {
     const ai = TSO_ORDER.indexOf(a), bi = TSO_ORDER.indexOf(b);
     return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi) || a.localeCompare(b);
   });
-  const ACTIVE_STATUSES = new Set(["Active", "Master Contract Enabled"]);
+}
+
+// Snapshot summary, not a rolling time window (contracts are a stock, not a
+// stream of trades) -- for each known TSO: how many contracts are active and
+// currently in term, and how much contracted capacity that represents (Master
+// rows carry no capacity of their own, so they add to the count but not the
+// capacity total). Each chip is a button: clicking it filters the table to
+// that pipeline and opens the top-shippers drill-down below.
+function renderTsoRow() {
   const el = document.getElementById("tso-row");
   el.innerHTML = "";
-  for (const tso of allTsos) {
-    const rows = DATA.rows.filter(r => r["Transporter (TSO)"] === tso && ACTIVE_STATUSES.has(r["Status"]));
+  for (const tso of orderedTsos()) {
+    const rows = DATA.rows.filter(r => r["Transporter (TSO)"] === tso && isActiveRow(r));
     const capacity = rows.reduce((a, r) => a + (Number(r["Contracted Capacity (000 m3/d)"]) || 0), 0);
-    const chip = document.createElement("div");
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.dataset.tso = tso;
     if (rows.length) {
       chip.className = "tso-chip";
-      chip.innerHTML = `<b>${tso}</b> &middot; ${rows.length.toLocaleString("en-US")} active contract${rows.length === 1 ? "" : "s"} &middot; ${fmtNum(capacity, 0)} 000 m&sup3;/d contracted`;
+      chip.title = "Show " + tso + " only, with its top shippers";
+      chip.innerHTML = `<b>${escapeHtml(tso)}</b> &middot; ${rows.length.toLocaleString("en-US")} active contract${rows.length === 1 ? "" : "s"} &middot; ${fmtNum(capacity, 0)} 000 m&sup3;/d contracted`;
+      chip.addEventListener("click", () => toggleDrillTso(tso));
     } else {
       chip.className = "tso-chip empty";
-      chip.innerHTML = `<b>${tso}</b> &middot; no active contracts`;
+      chip.disabled = true;
+      chip.innerHTML = `<b>${escapeHtml(tso)}</b> &middot; no active contracts`;
     }
     el.appendChild(chip);
   }
+  updateTsoChips();
+}
+
+function updateTsoChips() {
+  document.querySelectorAll("#tso-row .tso-chip").forEach(c => {
+    c.classList.toggle("selected", c.dataset.tso === drillTso);
+  });
+}
+
+/* ---------- pipeline drill-down --------------------------------------------
+   Clicking a pipeline chip pins that pipeline (writing the same
+   columnFilters["Transporter (TSO)"] Set the header menu and quick filters
+   use, so the table, chart and CSV export all narrow with it) and opens a
+   ranked view of who actually holds capacity there right now. Entry and exit
+   are kept as separate columns rather than summed into one number: the same
+   shipper commonly holds both sides on a pipeline and the two are not
+   interchangeable. A shipper row is itself a filter -- clicking one drills
+   the table to that shipper, clicking it again releases it.
+------------------------------------------------------------------------- */
+let drillTso = null;
+let drillShowAll = false;
+const DRILL_TOP_N = 10;
+
+function toggleDrillTso(tso) {
+  if (drillTso === tso) {
+    drillTso = null;
+    delete columnFilters["Transporter (TSO)"];
+    delete columnFilters["Shipper"];
+  } else {
+    drillTso = tso;
+    drillShowAll = false;
+    columnFilters["Transporter (TSO)"] = new Set([tso]);
+    delete columnFilters["Shipper"];
+  }
+  updateFilterIcons();
+  render();
+}
+
+function drillShipperRows() {
+  const by = new Map();
+  for (const r of filteredForDrill) {
+    if (r["Transporter (TSO)"] !== drillTso || !isActiveRow(r)) continue;
+    const name = r["Shipper"] || "(unnamed)";
+    if (!by.has(name)) by.set(name, { name, entry: 0, exit: 0, contracts: new Set() });
+    const e = by.get(name);
+    const cap = Number(r["Contracted Capacity (000 m3/d)"]) || 0;
+    if (r["Flow"] === "Entry") e.entry += cap;
+    else if (r["Flow"] === "Exit") e.exit += cap;
+    if (r["Contract Number"]) e.contracts.add(r["Contract Number"]);
+  }
+  const out = [...by.values()].map(e => ({ ...e, total: e.entry + e.exit, nContracts: e.contracts.size }));
+  out.sort((a, b) => b.total - a.total || b.nContracts - a.nContracts || a.name.localeCompare(b.name));
+  return out;
+}
+
+function renderDrill() {
+  const card = document.getElementById("drill-card");
+  if (!drillTso) { card.hidden = true; card.innerHTML = ""; return; }
+  card.hidden = false;
+  const all = drillShipperRows();
+  const pickedShipper = columnFilters["Shipper"] && columnFilters["Shipper"].size === 1
+    ? [...columnFilters["Shipper"]][0] : null;
+
+  if (!all.length) {
+    card.innerHTML = `<p class="panel-title">${escapeHtml(drillTso)} &mdash; Top Shippers</p>
+      <p class="panel-note">No active, currently-valid contracts on ${escapeHtml(drillTso)} match the filters in effect.</p>`;
+    return;
+  }
+  const shown = drillShowAll ? all : all.slice(0, DRILL_TOP_N);
+  const totEntry = all.reduce((a, e) => a + e.entry, 0);
+  const totExit = all.reduce((a, e) => a + e.exit, 0);
+  const body = shown.map((e, i) => `
+    <tr data-shipper="${escapeHtml(e.name)}" class="${pickedShipper === e.name ? "picked" : ""}">
+      <td class="rank">${i + 1}</td>
+      <td>${escapeHtml(e.name)}</td>
+      <td class="num">${e.nContracts.toLocaleString("en-US")}</td>
+      <td class="num">${e.entry ? fmtNum(e.entry, 0) : "&ndash;"}</td>
+      <td class="num">${e.exit ? fmtNum(e.exit, 0) : "&ndash;"}</td>
+      <td class="num">${fmtNum(e.total, 0)}</td>
+      <td class="num">${totEntry + totExit > 0 ? fmtNum(100 * e.total / (totEntry + totExit), 1) + "%" : "&ndash;"}</td>
+    </tr>`).join("");
+  card.innerHTML = `
+    <p class="panel-title">${escapeHtml(drillTso)} &mdash; Top Shippers by Held Capacity</p>
+    <p class="panel-note">Active contracts currently within their term, ${all.length.toLocaleString("en-US")} shipper${all.length === 1 ? "" : "s"} &middot;
+      ${fmtNum(totEntry, 0)} entry + ${fmtNum(totExit, 0)} exit = ${fmtNum(totEntry + totExit, 0)} 000 m&sup3;/d.
+      Reflects every filter in effect. Click a shipper to drill the table to it; click the ${escapeHtml(drillTso)} chip again to clear.</p>
+    <table>
+      <thead><tr><th></th><th>Shipper</th><th class="num">Contracts</th><th class="num">Entry (000 m&sup3;/d)</th><th class="num">Exit (000 m&sup3;/d)</th><th class="num">Total</th><th class="num">Share</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    ${all.length > DRILL_TOP_N ? `<button class="drill-more">${drillShowAll ? "Show top " + DRILL_TOP_N + " only" : "Show all " + all.length.toLocaleString("en-US") + " shippers"}</button>` : ""}`;
+
+  card.querySelectorAll("tbody tr").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const name = tr.dataset.shipper;
+      if (pickedShipper === name) delete columnFilters["Shipper"];
+      else columnFilters["Shipper"] = new Set([name]);
+      updateFilterIcons();
+      render();
+    });
+  });
+  const more = card.querySelector(".drill-more");
+  if (more) more.addEventListener("click", () => { drillShowAll = !drillShowAll; renderDrill(); });
 }
 
 function isoDate(d) { return d.toISOString().slice(0, 10); }
@@ -1089,13 +1300,35 @@ function buildQuickFilters() {
     btn.addEventListener("click", () => toggleQuickFilter(qf));
     el.appendChild(btn);
   }
+  const sep = document.createElement("span");
+  sep.className = "qf-sep";
+  el.appendChild(sep);
+  // The two currency toggles are separated from the filter chips above because
+  // they widen the row set rather than narrowing it.
+  const nExpired = DATA.rows.filter(isExpired).length;
+  const nFuture = DATA.rows.filter(isNotYetStarted).length;
+  const mkToggle = (key, text, count, get, set) => {
+    const btn = document.createElement("button");
+    btn.className = "qf-btn qf-validity";
+    btn.dataset.validity = key;
+    btn.textContent = text + " (" + count.toLocaleString("en-US") + ")";
+    btn.title = "Hidden by default -- these contracts are not currently in term.";
+    btn.addEventListener("click", () => { set(!get()); render(); });
+    el.appendChild(btn);
+  };
+  mkToggle("expired", "Show expired", nExpired, () => showExpired, v => { showExpired = v; });
+  mkToggle("future", "Show not yet started", nFuture, () => showFuture, v => { showFuture = v; });
 }
 
 function updateQuickFilterButtons() {
-  document.querySelectorAll(".qf-btn").forEach(btn => {
+  document.querySelectorAll(".qf-btn[data-qf]").forEach(btn => {
     const qf = QUICK_FILTERS.find(q => q.key === btn.dataset.qf);
     btn.classList.toggle("active", quickFilterActive(qf));
   });
+  const ex = document.querySelector('.qf-btn[data-validity="expired"]');
+  if (ex) ex.classList.toggle("active", showExpired);
+  const fu = document.querySelector('.qf-btn[data-validity="future"]');
+  if (fu) fu.classList.toggle("active", showFuture);
 }
 
 function renderTable() {
@@ -1121,7 +1354,11 @@ function renderTable() {
   }
   tbody.innerHTML = "";
   tbody.appendChild(frag);
-  document.getElementById("row-count").textContent = `${filtered.length.toLocaleString("en-US")} of ${DATA.rows.length.toLocaleString("en-US")} rows`;
+  const inScope = DATA.rows.filter(r => (showExpired || !isExpired(r)) && (showFuture || !isNotYetStarted(r))).length;
+  const hidden = DATA.rows.length - inScope;
+  document.getElementById("row-count").textContent =
+    `${filtered.length.toLocaleString("en-US")} of ${inScope.toLocaleString("en-US")} rows` +
+    (hidden ? ` (${hidden.toLocaleString("en-US")} not currently valid, hidden)` : "");
 }
 
 function updateArrows() {
@@ -1139,9 +1376,11 @@ function render() {
   applyFilters();
   sortRows();
   renderTable();
+  renderDrill();
   renderChart();
   updateArrows();
   updateQuickFilterButtons();
+  updateTsoChips();
 }
 
 function toCsvValue(v) {
@@ -1223,6 +1462,10 @@ async function init() {
     document.getElementById("f-category").value = "";
     document.getElementById("f-search").value = "";
     columnFilters = {};
+    drillTso = null;
+    drillShowAll = false;
+    showExpired = false;
+    showFuture = false;
     updateFilterIcons();
     render();
   });
